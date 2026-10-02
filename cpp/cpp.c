@@ -16,14 +16,16 @@
 #define READ 0
 #define WRITE 1
 #define SALT '#'
-#ifndef BUFSIZ
+/* #ifndef BUFSIZ */
 #define BUFSIZ 512
-#endif
+/* #endif */
 
 char *pbeg,*pbuf,*pend;
 char *outp,*inp;
 char *newp;
 char cinit;
+
+#define pdp11 1
 
 /* some code depends on whether characters are sign or zero extended */
 /*	#if '\377' < 0		not used here, old cpp doesn't understand */

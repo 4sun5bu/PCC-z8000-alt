@@ -1728,20 +1728,65 @@ io_op(r_opr, da_opr, size)
 {
 	register struct oper *op1, *op2;
 
-	if (numops != 2) { Prog_Error(E_NUMOPS); return; }
-	op1 = operands;	/* data register */
+	if (numops != 2) {
+	       	Prog_Error(E_NUMOPS);
+	       	return;
+	}
+#if 0
+	op1 = operands;		/* data register */
 	op2 = &operands[1];	/* port: @reg or #imm */
 
-	if (op1->type_o != t_reg) { Prog_Error(E_OPERAND); return; }
-
-	if (op2->type_o == t_ireg) {
-		/* R mode: port in indirect register */
-		WCode[0] = r_opr | (regfield(op2->reg_o) << 4)
-			| ((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o));
-	} else if (op2->type_o == t_immed) {
-		/* DA mode: port is immediate address */
-		WCode[0] = da_opr
-			| (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 4);
-		rel_val(op2, W);
-	} else Prog_Error(E_OPERAND);
+	if ((op1->type_o == t_reg) && ((r_opr == 0x3d00) || (r_opr == 0x3c00))) {
+		/* IN R,@R   IN  R,#addr */
+		if (op2->type_o == t_ireg) {
+			/* R mode: port in indirect register */
+			WCode[0] = r_opr | (regfield(op2->reg_o) << 4)
+				| ((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o));
+		} else if (op2->type_o == t_immed) {
+			/* DA mode: port is immediate address */
+			WCode[0] = da_opr
+				| (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 4);
+			rel_val(op2, W);
+		} else 
+			Prog_Error(E_OPERAND);
+	} else 	if ((op2->type_o == t_reg) && ((r_opr == 0x3f00) || (r_opr == 0x3e00))) {
+		/* OUT @R,R   OUT #addr,R */
+		if (op1->type_o == t_ireg) {
+			/* R mode: port in indirect register */
+			WCode[0] = r_opr | (regfield(op1->reg_o) << 4)
+				| ((size == B) ? bregfield(op2->value_o) : regfield(op2->value_o));
+		} else if (op1->type_o == t_immed) {
+			/* DA mode: port is immediate address */
+			WCode[0] = da_opr
+				| (((size == B) ? bregfield(op2->value_o) : regfield(op2->value_o)) << 4);
+			rel_val(op1, W);
+		} else
+			Prog_Error(E_OPERAND);
+	} else
+		Prog_Error(E_OPERAND);
+#else
+	if ((r_opr == 0x3d00) || (r_opr == 0x3c00)) {
+		/* IN R,@R   IN  R,#addr */
+		op1 = operands;
+		op2 = &operands[1];
+	} else if ((r_opr == 0x3f00) || (r_opr == 0x3e00)) {
+		/* OUT @R,R   OUT #addr,R */
+		op1 = &operands[1];
+		op2 = operands;
+	}
+	if (op1->type_o == t_reg) {
+		if (op2->type_o == t_ireg) {
+			/* R mode: port in indirect register */
+			WCode[0] = r_opr | (regfield(op2->reg_o) << 4)
+				| ((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o));
+		} else if (op2->type_o == t_immed) {
+			/* DA mode: port is immediate address */
+			WCode[0] = da_opr
+				| (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 4);
+			rel_val(op2, W);
+		} else
+			Prog_Error(E_OPERAND);
+	} else 
+		Prog_Error(E_OPERAND);
+#endif
 }

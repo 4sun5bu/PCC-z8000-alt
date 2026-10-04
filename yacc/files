@@ -5,7 +5,7 @@
 	/* also be changed  */
 
 	/* location of the parser text file */
-//# define PARSER "../lib/yaccpar"
+/* # define PARSER "../lib/yaccpar" */
 # define PARSER "/usr/local/lib/yaccpar"
 
 	/* basic size of the Yacc implementation */

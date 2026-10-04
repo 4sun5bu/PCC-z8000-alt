@@ -1,4 +1,4 @@
-CFLAGS=-O -w -Wno-implicit-int -Wno-implicit-function-declaration -Wno-return-mismatch -Wno-return-type -Wno-int-conversion
+CFLAGS=-O -std=c89 -Wno-implicit-int -Wno-implicit-function-declaration -Wno-return-mismatch -Wno-return-type -Wno-int-conversion
 
 c8k: cgram.o xdefs.o scan.o pftn.o trees.o optim.o code.o local.o reader.o \
 	local2.o order.o match.o allo.o comm1.o table.o

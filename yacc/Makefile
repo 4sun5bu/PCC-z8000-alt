@@ -1,4 +1,4 @@
-CFLAGS=-O0 -g3 -Wno-implicit-function-declaration -Wno-implicit-int -Wno-return-type
+CFLAGS=-O0 -g3 -std=c89 -Wno-implicit-function-declaration -Wno-implicit-int -Wno-return-type
 
 all: yaccV7
 

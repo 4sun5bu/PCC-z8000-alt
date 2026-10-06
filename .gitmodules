@@ -1,3 +1,0 @@
-[submodule "pcc-tests"]
-	path = pcc-tests
-	url = https://github.com/PortableCC/pcc-tests.git

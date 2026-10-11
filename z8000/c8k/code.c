@@ -93,7 +93,7 @@ efcode(){
 		printf( "	ld	r9,#.L%d\n" , stlab );  /* dst ptr */
 		size = tsize( DECREF(p->stype), p->dimoff, p->sizoff ) / SZCHAR;
 		if( size > 4 ){
-			printf( "	ld	r0,#%d\n", size );
+			printf( "	ld	r0,#%d\n", size/2 );
 			printf( "	ldir	@r9,@r8,r0\n" );
 		} else {
 			i = size;
@@ -144,6 +144,7 @@ bfcode( a, n ) int a[]; {
 		printf( "	.data\n.L%d:	.word 0\n	.text\n", plab );
 	}
 
+#if 0
 	/* routine prolog */
 	/* push R14, ld R14,SP, sub SP,#framesize */
 
@@ -153,6 +154,12 @@ bfcode( a, n ) int a[]; {
 	/* save callee-saved regs at fixed offsets from FP (R14) */
 	printf( "	ldm	-20(r14),r4,#10\n" );
 
+#else
+	/* Shared entry preserves the standard fixed frame and argument offsets.
+	 * R8/R9 are call-clobbered; csv leaves R0-R3 untouched. */
+	printf( "\tld\tr8,#_F%d\n", ftnno );
+	printf( "\tcall\t_csv\n" );
+#endif
 	usedregs = 0;
 
 	off = ARGINIT;
@@ -171,6 +178,10 @@ bfcode( a, n ) int a[]; {
 			else
 				printf( "	ld	%s,%d(r14)\n",
 				  rnames[temp], p->offset/SZCHAR );
+			if(p->stype==LONG || p->stype==ULONG) {
+				printf("\tld\t%s,%d(r13)\n",rnames[temp+1],p->offset/SZCHAR+2);
+				usedregs |= 1<<(temp+1);
+			}
 			usedregs |= 1<<temp;
 			p->offset = temp;  /* remember register number */
 			p->sclass = REGISTER;   /* remember that it is a register */
@@ -304,6 +315,18 @@ genswitch(p,n) register struct sw *p;{
 	register CONSZ j, range;
 	register dlab, swlab;
 
+	if(p->stype==LONG || p->stype==ULONG || p->stype==UNSIGNED) {
+		for(i=1;i<=n;i++) {
+			int next=getlab();
+			if(p->stype==LONG || p->stype==ULONG) {
+				printf("\tcp\tr0,#%ld\n\tjr\tne,.L%d\n",(p[i].sval>>16)&65535L,next);
+				printf("\tcp\tr1,#%ld\n",p[i].sval&65535L);
+			} else printf("\tcp\tr0,#%ld\n",p[i].sval&65535L);
+			printf("\tjr\teq,.L%d\n",p[i].slab); deflab(next);
+		}
+		if(p->slab>=0) branch(p->slab);
+		return;
+	}
 	range = p[n].sval-p[1].sval;
 
 	if( range>0 && range <= 3*n && n>=4 ){ /* implement a direct switch */
@@ -328,7 +351,8 @@ genswitch(p,n) register struct sw *p;{
 		printf( "	ld	r1,@r1\n" );
 		printf( "	jp	@r1\n" );
 
-		/* output table */
+		/* Data loads use D space, even when code and data are separated. */
+		locctr(DATA);
 
 		printf( ".L%d:\n", swlab );
 
@@ -338,6 +362,7 @@ genswitch(p,n) register struct sw *p;{
 				p[i++].slab : dlab );
 			}
 
+		locctr(PROG);
 		if( p->slab< 0 ) deflab( dlab );
 		return;
 

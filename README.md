@@ -12,6 +12,7 @@ PCC-Z8000-altは、tpaxia氏のPCC-Z8000からのフォークです。UNIX V7時
 ## ビルド
 Linux Mint 22.3上のGCC-13.3.0でビルドできることを確認しています。1970-80年代の古いK&RスタイルのC言語で書かれたコードをベースにしているため、ビルド環境が異なるとエラーが出るかもしれません。
 ```bash
+<<<<<<< HEAD
 cd yacc && make
 sudo cp yaccV7 /usr/local/bin
 sudo cp yaccpar /usr/local/lib
@@ -23,4 +24,3 @@ sudo cp c8k/c8k /usr/local/bin
 sudo cp ld8k /usr/local/bin
 sudo cp cc8k /usr/local/bin
 ```
-

@@ -28,12 +28,17 @@ allo0(){ /* free everything */
 
 # define TBUSY 01000
 
+/* set while allocating for a template whose scratch register holds one word
+   at a time, so a long or double operand must not reserve a pair or quad */
+static int wordneed;
+
 allo( p, q ) NODE *p; struct optab *q; {
 
 	register n, i, j;
 
 	n = q->needs;
 	i = 0;
+	wordneed = n & NWORD;
 
 	while( n & NACOUNT ){
 		resc[i].in.op = REG;
@@ -149,6 +154,20 @@ usable( p, n, r ) NODE *p; {
 	if( busy[r] > 1 ) return(0);
 	if(((n&NAMASK) && !(rstatus[r]&SAREG)) || ((n&NBMASK) && !(rstatus[r]&SBREG)))
 		return(0);
+	if( wordneed ) {
+		if( busy[r] ) return(0);
+		busy[r] |= TBUSY;
+		return(1);
+	}
+	if( szty(p->in.type) == 4 ) {
+		int k;
+		if( r&3 ) return(0);
+		for(k=0;k<4;k++)
+			if(!istreg(r+k) || busy[r+k]>1 ||
+			   (busy[r+k] && !shareit(p,r+k,n))) return(0);
+		for(k=0;k<4;k++) busy[r+k] |= TBUSY;
+		return(1);
+	}
 	if( (szty(p->in.type) == 2) ){ /* only do the pairing for real regs */
 		if( r&01 ) return(0);
 		if( !istreg(r+1) ) return( 0 );
@@ -192,7 +211,7 @@ ushare( p, f, r ) NODE *p; {
 		else return( r == p->tn.rval );
 		}
 	if( p->in.op == REG ){
-		return( r == p->tn.rval || ( szty(p->in.type) == 2 && r==p->tn.rval+1 ) );
+		return( r >= p->tn.rval && r < p->tn.rval+szty(p->in.type) );
 		}
 	return(0);
 	}
@@ -222,11 +241,10 @@ rfree( r, t ) TWORD t; {
 		}
 
 	if( istreg(r) ){
-		if( --busy[r] < 0 ) cerror( "register overfreed");
-		if( szty(t) == 2 ){
-			if( (r&01) ) cerror( "illegal free" );
-			if( --busy[r+1] < 0 ) cerror( "register overfreed" );
-			}
+		int k, size = szty(t);
+		if(r & (size-1)) cerror("illegal free");
+		for(k=0;k<size;k++)
+			if(--busy[r+k]<0) cerror("register overfreed");
 		}
 	}
 
@@ -238,11 +256,11 @@ rbusy(r,t) TWORD t; {
 		printf( "rbusy( %s ), size %d\n", rnames[r], szty(t) );
 		}
 
-	if( istreg(r) ) ++busy[r];
-	if( szty(t) == 2 ){
-		if( istreg(r+1) ) ++busy[r+1];
-		if( (r&01) ) cerror( "illegal register pair freed" );
-		}
+	{
+		int k, size = szty(t);
+		if(r & (size-1)) cerror("illegal register group");
+		for(k=0;k<size;k++) if(istreg(r+k)) ++busy[r+k];
+	}
 	}
 
 rwprint( rw ){ /* print rewriting rule */
@@ -286,6 +304,7 @@ reclaim( p, rw, cookie ) NODE *p; {
 
 	/* get back stuff */
 
+# ifndef BUG4
 	if( rdebug ){
 		printf( "reclaim( %lx, ", p );
 		rwprint( rw );
@@ -293,6 +312,7 @@ reclaim( p, rw, cookie ) NODE *p; {
 		prcook( cookie );
 		printf( " )\n" );
 		}
+# endif
 
 	if( rw == RNOP || ( p->in.op==FREE && rw==RNULL ) ) return;  /* do nothing */
 
@@ -375,7 +395,8 @@ reclaim( p, rw, cookie ) NODE *p; {
 		i = p->in.rall & ~MUSTDO;
 		if( i & NOPREF ) return;
 		if( i != p->tn.rval ){
-			if( busy[i] || ( szty(p->in.type)==2 && busy[i+1] ) ){
+			if( busy[i] || ( szty(p->in.type)>=2 && busy[i+1] ) ||
+			    (szty(p->in.type)==4 && (busy[i+2] || busy[i+3])) ){
 				cerror( "faulty register move" );
 				}
 			rbusy( i, p->in.type );

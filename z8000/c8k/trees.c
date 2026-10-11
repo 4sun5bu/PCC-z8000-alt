@@ -160,6 +160,11 @@ buildtree( o, l, r ) register NODE *l, *r; {
 
 	/* its real; we must make a new node */
 
+	/* The result of a shift has the type of its left operand; the count is
+	   converted to int first so that a long count does not widen it. */
+	if( (o==LS || o==RS) && (r->in.type==LONG || r->in.type==ULONG) )
+		r = makety( r, INT, 0, INT );
+
 	p = block( o, l, r, INT, 0, INT );
 
 	actions = opact(p);
@@ -480,6 +485,8 @@ strargs( p ) register NODE *p;  { /* rewrite structure flavored arguments */
 		p->in.left = buildtree( UNARY AND, p->in.left, NIL );
 		p = clocal(p);
 		}
+	else if (p->in.type==FLOAT)
+		p = makety(p, DOUBLE, 0, DOUBLE);
 	else if (p->in.type==CHAR || p->in.type==UCHAR || p->in.type==SHORT || p->in.type==USHORT)
 		p = makety(p, INT, 0, INT);
 
@@ -813,10 +820,10 @@ NODE *
 bcon( i ){ /* make a constant node with value i */
 	register NODE *p;
 
+	/* An integer constant is an int. (The 68000 port this file came from
+	   typed it char or short when it fitted, as a hint for short
+	   immediates; that made a cast such as (char)300 a no-op.) */
 	p = block( ICON, NIL, NIL, INT, 0, INT );
-	if (p->tn.lval>=-128 && p->tn.lval<=127) p->tn.type = CHAR;
-	else if (p->tn.lval>=-32768 && p->tn.lval<=32767) p->tn.type = SHORT;
-	else p->tn.type = INT;
 	p->tn.lval = i;
 	p->tn.rval = NONAME;
 	return( clocal(p) );
@@ -1052,6 +1059,16 @@ tymatch(p)  register NODE *p; {
 		tu = (u && UNSIGNABLE(t))?ENUNSIGN(t):t;
 		}
 
+	/* Float compound arithmetic evaluates in double, then rounds once on
+	 * storage. Narrowing the RHS first loses contributions above a tie. */
+	if((o==ASG PLUS || o==ASG MINUS || o==ASG MUL || o==ASG DIV) && t1==FLOAT) {
+		p->in.right=makety(p->in.right,DOUBLE,0,DOUBLE);
+		p->in.type=FLOAT;
+		p->fn.cdim=p->in.left->fn.cdim;
+		p->fn.csiz=p->in.left->fn.csiz;
+		return p;
+	}
+
 	/* because expressions have values that are at least as wide
 	   as INT or UNSIGNED, the only conversions needed
 	   are those involving FLOAT/DOUBLE, and those
@@ -1069,7 +1086,8 @@ tymatch(p)  register NODE *p; {
 	else {	if ( logop(o) ) p->in.type = INT;
 		else p->in.type = tu;
 		p->fn.cdim = 0;
-		p->fn.csiz = t;
+		/* a comparison yields an int whatever it compares */
+		p->fn.csiz = logop(o) ? INT : t;
 		}
 
 # ifndef BUG1
@@ -1401,10 +1419,9 @@ prtdcon( p ) register NODE *p; {
 		locctr( DATA );
 		defalign( ALDOUBLE );
 		deflab( i = getlab() );
-		fincode( p->fpn.dval, SZDOUBLE );
+		fincode( p->fpn.dval, p->in.type==FLOAT ? SZFLOAT : SZDOUBLE );
 		p->tn.lval = 0;
 		p->tn.rval = -i;
-		p->in.type = DOUBLE;
 		p->in.op = NAME;
 		}
 	}

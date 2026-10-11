@@ -1,3 +1,5 @@
+#include <stdarg.h>
+
 #include "mical.h"
 extern char File_name[];
 
@@ -65,6 +67,7 @@ int Errors = 0;		/* Number of errors in this pass */
    control string which explains the error, and Number is the value of the
    offending parameter.  This routine will not return.
 */
+#if 0
 Sys_Error(Explanation,Number)
 char *Explanation;
 {
@@ -72,6 +75,19 @@ char *Explanation;
 	fprintf(stderr, Explanation,Number);
 	abort();
 }
+#endif
+
+void
+Sys_Error(const char *Explanation,...)
+{
+	va_list args;
+	fprintf(stderr, "Assembler Error-- ");
+	va_start(args, Explanation);
+	vfprintf(stderr, Explanation, args);
+	va_end(args);
+	abort();
+}
+
 
 /* This is called whenever the assembler recognizes an error in the current
 statement. It registers the error, so that an error code will be listed with

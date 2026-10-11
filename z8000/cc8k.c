@@ -19,7 +19,7 @@ char	*outfile;
 char	ts[CHSPACE+50];
 char	*tsa = ts;
 char	*tsp = ts;
-char	*av[50];
+char	*av[MAXOPT+MAXLIB+16];
 char	*clist[MAXFIL];
 char	*llist[MAXLIB];
 int	pflag;
@@ -33,9 +33,19 @@ int	noflflag;
 int	mxflag;
 char	*chpass ;
 char	*npassname ;
+
+# ifdef TWOPASS
+# define PASS0 "front"
+# define PASS2 "back"
+char	pass0[64] = "/lib/front";
+char	pass2[64] = "/lib/back";
+# else
+# define PASS0 "cz8"
+# define PASS2 "xxx"
 char	pass0[64] = "/usr/local/bin/c8k";
-char	pass1[64] = "/lib/oz8";
 char	pass2[64] = "/lib/xxx";
+# endif
+char	pass1[64] = "/lib/oz8";
 char	passp[64] = "/usr/local/bin/cppV7";
 char	libdr[64];
 char	*ldrel = NULL;	/* -R argument for loader */
@@ -72,6 +82,11 @@ char *argv[];
 	setbuf(stdout, (char *)NULL);
 
 	while(++i < argc) {
+		/* Leave room for predefined cpp options below. */
+		if (pv >= ptemp+MAXOPT-6) {
+			error("Too many preprocessor options", (char *)NULL);
+			exit(1);
+		}
 		if(*argv[i] == '-') switch (argv[i][1]) {
 		default:
 			goto passa;
@@ -82,6 +97,7 @@ char *argv[];
 		case 'R':
 			if (++i < argc)
 				ldrel = argv[i];
+			else error("Missing -R argument", (char *)NULL);
 			break;
 		case 'o':
 			if (++i < argc) {
@@ -93,6 +109,7 @@ char *argv[];
 					exit(8);
 				}
 			}
+			else error("Missing -o argument", (char *)NULL);
 			break;
 		case 'O':
 			oflag++;
@@ -124,11 +141,15 @@ char *argv[];
 			}
 			break;
 		case 't':
+			if (npassname == NULL) {
+				error("-t requires a preceding -B prefix", (char *)NULL);
+				break;
+			}
 			for (t=argv[i]+2; *t; t++) {
 				switch (*t) {
 				case '0':
 					strcpy (pass0, npassname);
-					strcat (pass0, "cz8");
+					strcat (pass0, PASS0);
 					continue;
 				case '1':
 					strcpy (pass1, npassname);
@@ -136,7 +157,7 @@ char *argv[];
 					continue;
 				case '2':
 					strcpy (pass2, npassname);
-					strcat (pass2, "xxx");
+					strcat (pass2, PASS2);
 					continue;
 				case 'p':
 					strcpy (passp, npassname);
@@ -164,6 +185,10 @@ char *argv[];
 			npassname = argv[i]+2;
 			if (npassname[0]==0)
 				npassname = "/usr/local/lib/";
+			if (strlen(npassname) > 48) {
+				error("-B prefix too long", (char *)NULL);
+				exit(1);
+			}
 			break;
 		}
 		else {
@@ -190,6 +215,14 @@ passa:
 			}
 		}
 	}
+	if (eflag) exit(eflag);
+# ifdef TWOPASS
+	/* No alternate profiling/no-FP startup objects are installed yet. */
+	if (proflag || noflflag) {
+		error("-p and -f are not available in the two-pass driver", (char *)NULL);
+		exit(1);
+	}
+# endif
 
 	/* Z8000 predefined macros */
 	*pv++ = "-Updp11";
@@ -209,26 +242,26 @@ passa:
 		tmp0 = copy("/tmp/ctm0a");
 		while (access(tmp0, 0)==0)
 			tmp0[9]++;
-		while((creat(tmp0, 0400))<0) {
+		while((c=creat(tmp0, 0400))<0) {
 			if (tmp0[9]=='z') {
 				error("ccz8: cannot create temp", NULL);
 				exit(1);
 			}
 			tmp0[9]++;
 		}
+		close(c);
+		(tmp1 = copy(tmp0))[8] = '1';
+		(tmp2 = copy(tmp0))[8] = '2';
+		(tmp3 = copy(tmp0))[8] = '3';
+		strcat(tmp3, ".az8");
+		if (oflag)
+			(tmp5 = copy(tmp0))[8] = '5';
+		(tmp4 = copy(tmp0))[8] = '4';
 	}
 	if (signal(SIGINT, SIG_IGN) != SIG_IGN)
 		signal(SIGINT, idexit);
 	if (signal(SIGTERM, SIG_IGN) != SIG_IGN)
 		signal(SIGTERM, idexit);
-	(tmp1 = copy(tmp0))[8] = '1';
-	(tmp2 = copy(tmp0))[8] = '2';
-	(tmp3 = copy(tmp0))[8] = '3';
-	strcat(tmp3, ".s");
-	if (oflag)
-		(tmp5 = copy(tmp0))[8] = '5';
-	if (pflag==0)
-		(tmp4 = copy(tmp0))[8] = '4';
 	pvt = pv;
 	for (i=0; i<nc; i++) {
 		if (nc>1)
@@ -257,7 +290,7 @@ passa:
 		}
 		tsp = savetsp;
 
-		av[0]= "cz8";
+		av[0]= PASS0;
 		if (pflag) {
 			cflag++;
 			continue;
@@ -270,12 +303,26 @@ passa:
 		av[j++] = 0;
 		if (sflag)
 		    assource = tmp3 = setsuf(clist[i], "s");
+# ifdef TWOPASS
+		if (callsys(pass0, av, tmp4, tmp1)) {
+# else
 		if (callsys(pass0, av, tmp4, oflag ? tmp5 : tmp3)) {
+# endif
 			cflag++;
 			eflag++;
 			continue;
 		}
 		unlink(tmp4);
+# ifdef TWOPASS
+		av[0] = PASS2;
+		av[1] = 0;
+		if (callsys(pass2, av, tmp1, oflag ? tmp5 : tmp3)) {
+			cflag++;
+			eflag++;
+			continue;
+		}
+		unlink(tmp1);
+# endif
 
 		if (oflag) {
 		    av[0] = "oz8";
@@ -300,7 +347,7 @@ assemble:
 		cunlink(tmp1);
 		cunlink(tmp2);
 		cunlink(tmp4);
-		if (callsys(as8k, av, 0, 0) > 1) {
+		if (callsys(as8k, av, 0, 0)) {
 			cflag++;
 			eflag++;
 			continue;
@@ -446,7 +493,7 @@ callsys(f, v, si, so)
 char f[], *v[];
 char	*si, *so;
 {
-	int t, status;
+	int t, status, child;
 
 	if ((t=fork())==0) {
 		if (si) {
@@ -471,8 +518,8 @@ char	*si, *so;
 			printf("Try again\n");
 			return(100);
 		}
-	while(t!=wait(&status))
-		;
+	while (t != (child=wait(&status)))
+		if (child < 0) return(100);
 	if (t = status&0377) {
 		if (t!=SIGINT) {
 			printf("Fatal error in %s\n", f);

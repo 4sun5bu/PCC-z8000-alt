@@ -19,6 +19,9 @@ int	numops;			/* # of operands to the current instruction */
  *   48-60 (mult 4): quad registers rq0-rq12
  */
 
+/* Helpers take int. Operand value_o is long: callers must narrow it
+ * explicitly because K&R calls do not convert arguments on 16-bit Unix. */
+
 /* is word register? */
 wreg(r) { return(r >= 0 && r <= 15); }
 
@@ -52,7 +55,7 @@ bregfield(r)
 /* Check if operand is a register of the right type */
 chk_wreg(op)
   struct oper *op;
-  {	if (op->type_o != t_reg || !wreg(op->value_o)) {
+  {	if (op->type_o != t_reg || !wreg((int)op->value_o)) {
 		Prog_Error(E_REG);
 		return(0);
 	}
@@ -61,7 +64,7 @@ chk_wreg(op)
 
 chk_breg(op)
   struct oper *op;
-  {	if (op->type_o != t_reg || !breg(op->value_o)) {
+  {	if (op->type_o != t_reg || !breg((int)op->value_o)) {
 		Prog_Error(E_REG);
 		return(0);
 	}
@@ -70,7 +73,7 @@ chk_breg(op)
 
 chk_lreg(op)
   struct oper *op;
-  {	if (op->type_o != t_reg || !lreg(op->value_o)) {
+  {	if (op->type_o != t_reg || !lreg((int)op->value_o)) {
 		Prog_Error(E_REG);
 		return(0);
 	}
@@ -117,6 +120,7 @@ Instruction(opindex)
 	case i_ei:	di_ei(0x7C04); break;
 	case i_sc:	sc_op(); break;
 	case i_ldctl:	ldctl_op(); break;
+	case i_ldctlb:	ldctlb_op(); break;
 
 /* =================== Load instructions =================== */
 
@@ -426,22 +430,44 @@ ldctl_op()
 	op2 = &operands[1];
 
 	/* ldctl Rd, ctrl */
-	if (op1->type_o == t_reg && wreg(op1->value_o) &&
-	    op2->type_o == t_reg && ctrlreg(op2->value_o)) {
-		WCode[0] = 0x7D00 | (regfield(op1->value_o) << 4) | ctrl_code(op2->value_o);
+	if (op1->type_o == t_reg && wreg((int)op1->value_o) &&
+	    op2->type_o == t_reg && ctrlreg((int)op2->value_o)) {
+		WCode[0] = 0x7D00 | (regfield((int)op1->value_o) << 4) | ctrl_code((int)op2->value_o);
 		return;
 	}
 
 	/* ldctl ctrl, Rs */
-	if (op1->type_o == t_reg && ctrlreg(op1->value_o) &&
-	    op2->type_o == t_reg && wreg(op2->value_o)) {
-		WCode[0] = 0x7D00 | (regfield(op2->value_o) << 4) | (ctrl_code(op1->value_o) + 8);
+	if (op1->type_o == t_reg && ctrlreg((int)op1->value_o) &&
+	    op2->type_o == t_reg && wreg((int)op2->value_o)) {
+		WCode[0] = 0x7D00 | (regfield((int)op2->value_o) << 4) | (ctrl_code((int)op1->value_o) + 8);
 		return;
 	}
 
 	Prog_Error(E_OPERAND);
 }
 
+
+/* Z8000 manual, LDCTLB: 10001100 Rb 1001 writes FLAGS; ...0001 reads.
+ * Only byte registers and FLAGS are accepted; this is unprivileged.
+ */
+ldctlb_op()
+{
+	register struct oper *dst, *src;
+	if (numops != 2) { Prog_Error(E_NUMOPS); return; }
+	dst = operands;
+	src = &operands[1];
+	if (dst->type_o == t_reg && dst->value_o == 70 &&
+	    src->type_o == t_reg && breg((int)src->value_o)) {
+		WCode[0] = 0x8C09 | (regfield((int)src->value_o) << 4);
+		return;
+	}
+	if (src->type_o == t_reg && src->value_o == 70 &&
+	    dst->type_o == t_reg && breg((int)dst->value_o)) {
+		WCode[0] = 0x8C01 | (regfield((int)dst->value_o) << 4);
+		return;
+	}
+	Prog_Error(E_OPERAND);
+}
 
 /* one_reg -- single register operand, e.g. neg, com, clr, test, tset, exts, extsb */
 one_reg(opr, size)
@@ -516,8 +542,8 @@ testl_op()
 {
 	register struct oper *op = operands;
 	if (numops != 1) { Prog_Error(E_NUMOPS); return; }
-	if (op->type_o != t_reg || !lreg(op->value_o)) { Prog_Error(E_REG); return; }
-	WCode[0] = 0x9C08 | (regfield(op->value_o) << 4);
+	if (op->type_o != t_reg || !lreg((int)op->value_o)) { Prog_Error(E_REG); return; }
+	WCode[0] = 0x9C08 | (regfield((int)op->value_o) << 4);
 }
 
 
@@ -696,12 +722,12 @@ ldl_op()
 	op2 = &operands[1];
 
 	/* rr, src */
-	if (op1->type_o == t_reg && lreg(op1->value_o)) {
-		rf1 = regfield(op1->value_o);
+	if (op1->type_o == t_reg && lreg((int)op1->value_o)) {
+		rf1 = regfield((int)op1->value_o);
 
 		/* rr, rr: LDL RRd,RRs = 0x94_Rs_Rd */
-		if (op2->type_o == t_reg && lreg(op2->value_o)) {
-			rf2 = regfield(op2->value_o);
+		if (op2->type_o == t_reg && lreg((int)op2->value_o)) {
+			rf2 = regfield((int)op2->value_o);
 			WCode[0] = 0x9400 | (rf2 << 4) | rf1;
 			return;
 		}
@@ -738,8 +764,8 @@ ldl_op()
 	}
 
 	/* @r, rr  or  addr, rr  or  addr(r), rr */
-	if (op2->type_o == t_reg && lreg(op2->value_o)) {
-		rf2 = regfield(op2->value_o);
+	if (op2->type_o == t_reg && lreg((int)op2->value_o)) {
+		rf2 = regfield((int)op2->value_o);
 
 		if (op1->type_o == t_ireg) {
 			if (op1->reg_o == 0) { Prog_Error(E_REG); return; }
@@ -777,7 +803,7 @@ lda_op()
 	op2 = &operands[1];
 
 	if (!chk_wreg(op1)) return;
-	rf1 = regfield(op1->value_o);
+	rf1 = regfield((int)op1->value_o);
 
 	if (op2->type_o == t_normal) {
 		WCode[0] = 0x7600 | (0 << 4) | rf1;
@@ -802,7 +828,7 @@ ldk_op()
 	op2 = &operands[1];
 
 	if (!chk_wreg(op1)) return;
-	rf1 = regfield(op1->value_o);
+	rf1 = regfield((int)op1->value_o);
 
 	if (op2->type_o != t_immed) { Prog_Error(E_OPERAND); return; }
 	if (op2->value_o < 0 || op2->value_o > 15) Prog_Error(E_CONSTANT);
@@ -824,10 +850,10 @@ ldm_op()
 	/* ldm reg,@reg,#count  or  ldm reg,addr,#count  or  ldm reg,addr(reg),#count*/
 	if (op1->type_o == t_reg && wreg(op1->value_o)) {
 		rf = regfield(op1->value_o);
-		if (op3->type_o != t_immed) { Prog_Error(E_OPERAND); return; }
+			if (op3->type_o != t_immed) { Prog_Error(E_OPERAND); return; }
 
 		if (op2->type_o == t_ireg) {
-			WCode[0] = 0x1C01 | (regfield(op2->reg_o) << 4);
+			WCode[0] = 0x1C01 | (regfield((int)op2->reg_o) << 4);
 			WCode[1] = (rf << 8) | ((op3->value_o - 1) & 0x0F);
 			Code_length = 4;
 		} else if (op2->type_o == t_normal) {
@@ -836,7 +862,7 @@ ldm_op()
 			Code_length = 4;
 			rel_val(op2, W);
 		} else if ( op2->type_o == t_x) {
-			WCode[0] = 0x5c01 | (regfield(op2->reg_o) << 4);
+			WCode[0] = 0x5c01 | (regfield((int)op2->reg_o) << 4);
 			WCode[1] = (rf << 8) | ((op3->value_o - 1) & 0x0F);
 			Code_length = 4;
 			rel_val(op2, W);
@@ -850,7 +876,7 @@ ldm_op()
 		if (op3->type_o != t_immed) { Prog_Error(E_OPERAND); return; }
 
 		if (op1->type_o == t_ireg) {
-			WCode[0] = 0x1C09 | (regfield(op1->reg_o) << 4);
+			WCode[0] = 0x1C09 | (regfield((int)op1->reg_o) << 4);
 			WCode[1] = (rf << 8) | ((op3->value_o - 1) & 0x0F);
 			Code_length = 4;
 		} else if (op1->type_o == t_normal) {
@@ -859,11 +885,11 @@ ldm_op()
 			Code_length = 4;
 			rel_val(op1, W);
 		} else if (op1->type_o == t_x) {
-			WCode[0] = 0x5c09 | (regfield(op1->reg_o) << 4);
+			WCode[0] = 0x5c09 | (regfield((int)op1->reg_o) << 4);
 			WCode[1] = (rf << 8) | ((op3->value_o - 1) & 0x0F);
 			Code_length = 4;
 			rel_val(op1, W);
-		}	else Prog_Error(E_OPERAND);
+		} else Prog_Error(E_OPERAND);
 		return;
 	}
 
@@ -885,11 +911,11 @@ ldr_op(size)
 	if (op1->type_o == t_reg && op2->type_o == t_normal) {
 		offs = op2->value_o - (Dot + 4);	/* PC-relative */
 		if (size == B)
-			WCode[0] = 0x3000 | bregfield(op1->value_o);
+			WCode[0] = 0x3000 | bregfield((int)op1->value_o);
 		else if (size == W)
-			WCode[0] = 0x3100 | regfield(op1->value_o);
+			WCode[0] = 0x3100 | regfield((int)op1->value_o);
 		else /* L */
-			WCode[0] = 0x3500 | regfield(op1->value_o);
+			WCode[0] = 0x3500 | regfield((int)op1->value_o);
 		op2->value_o = offs;
 		op2->sym_o = 0;
 		rel_val(op2, W);
@@ -900,11 +926,11 @@ ldr_op(size)
 	if (op2->type_o == t_reg && op1->type_o == t_normal) {
 		offs = op1->value_o - (Dot + 4);
 		if (size == B)
-			WCode[0] = 0x3200 | bregfield(op2->value_o);
+			WCode[0] = 0x3200 | bregfield((int)op2->value_o);
 		else if (size == W)
-			WCode[0] = 0x3300 | regfield(op2->value_o);
+			WCode[0] = 0x3300 | regfield((int)op2->value_o);
 		else /* L */
-			WCode[0] = 0x3700 | regfield(op2->value_o);
+			WCode[0] = 0x3700 | regfield((int)op2->value_o);
 		op1->value_o = offs;
 		op1->sym_o = 0;
 		rel_val(op1, W);
@@ -927,7 +953,7 @@ ex_op(size)
 	if (op1->type_o != t_reg) { Prog_Error(E_OPERAND); return; }
 
 	{
-		int brf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
+		int brf = (size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o);
 		if (op2->type_o == t_ireg) {
 			if (op2->reg_o == 0) { Prog_Error(E_REG); return; }
 			if (size == B)
@@ -987,11 +1013,11 @@ int mi_id;	/* memory-immediate identifier (0x01 for CP, else 0) */
 
 	/* reg, src */
 	if (op1->type_o == t_reg) {
-		rf1 = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
+		rf1 = (size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o);
 
 		/* reg, reg: R mode */
 		if (op2->type_o == t_reg) {
-			rf2 = (size == B) ? bregfield(op2->value_o) : regfield(op2->value_o);
+			rf2 = (size == B) ? bregfield((int)op2->value_o) : regfield((int)op2->value_o);
 			WCode[0] = rr_opr | (rf2 << 4) | rf1;
 			return;
 		}
@@ -1083,12 +1109,12 @@ alul_op(opr)
 	im_base = opr & ~0x8000;	/* 0x9600 -> 0x1600 */
 	da_base = im_base | 0x4000;	/* 0x1600 -> 0x5600 */
 
-	if (op1->type_o != t_reg || !lreg(op1->value_o)) { Prog_Error(E_REG); return; }
-	rf1 = regfield(op1->value_o);
+	if (op1->type_o != t_reg || !lreg((int)op1->value_o)) { Prog_Error(E_REG); return; }
+	rf1 = regfield((int)op1->value_o);
 
 	/* rr, rr: R mode */
-	if (op2->type_o == t_reg && lreg(op2->value_o)) {
-		rf2 = regfield(op2->value_o);
+	if (op2->type_o == t_reg && lreg((int)op2->value_o)) {
+		rf2 = regfield((int)op2->value_o);
 		WCode[0] = opr | (rf2 << 4) | rf1;
 		return;
 	}
@@ -1143,9 +1169,9 @@ rr_op(opr, size)
 	}
 
 	if (size == B)
-		WCode[0] = opr | (bregfield(op2->value_o) << 4) | bregfield(op1->value_o);
+		WCode[0] = opr | (bregfield((int)op2->value_o) << 4) | bregfield((int)op1->value_o);
 	else
-		WCode[0] = opr | (regfield(op2->value_o) << 4) | regfield(op1->value_o);
+		WCode[0] = opr | (regfield((int)op2->value_o) << 4) | regfield((int)op1->value_o);
 }
 
 
@@ -1169,7 +1195,7 @@ inc_dec(opr, size)
 
 	/* reg, #n: R mode */
 	if (op1->type_o == t_reg) {
-		rf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
+		rf = (size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o);
 		WCode[0] = (opr | 0x8000) | (rf << 4) | (n & 0x0F);
 		return;
 	}
@@ -1209,33 +1235,18 @@ bit_op(opr, size)
 	if (numops != 2) { Prog_Error(E_NUMOPS); return; }
 	op1 = operands;	/* destination register */
 	op2 = &operands[1];	/* bit number */
-#if 0
-	if (op1->type_o != t_reg) { Prog_Error(E_OPERAND); return; }
 
-	if (op2->type_o == t_immed) {
-		/* static bit: bit number in imm4 */
-		int rf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
-		if (op2->value_o < 0 || op2->value_o > (size == B ? 7 : 15)) Prog_Error(E_CONSTANT);
-		WCode[0] = (opr | 0x8000) | (rf << 4) | (op2->value_o & 0x0F);
-	} else if (op2->type_o == t_reg) {
-		/* dynamic bit: bit number in word register, target may be byte reg */
-		int rf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
-		WCode[0] = opr | regfield(op2->value_o);
-		WCode[1] = rf << 8;
-		Code_length = 4;
-	} else Prog_Error(E_OPERAND);
-#else
 	if (op2->type_o == t_immed) {
 		/* static bit: bit number in imm4 */
 		if (op1->type_o == t_reg) {
 			/* Rd, #n */
-			int rf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
+			int rf = (size == B) ? bregfield(op1->value_o) : regfield((int)op1->value_o);
 			if (op2->value_o < 0 || op2->value_o > (size == B ? 7 : 15)) Prog_Error(E_CONSTANT);
 			WCode[0] = (opr | 0x8000) | (rf << 4) | (op2->value_o & 0x0F);
 		} else if (op1->type_o == t_ireg) {
 			/* @Rd,#n */
 			if (!wreg(op1->reg_o) || op1->reg_o == 0) Prog_Error(E_REG);
-			int rf = (regfield(op1->reg_o) & 0x0f) | ((size == B) ? 0x0 : 0x10);
+			int rf = (regfield((int)op1->reg_o) & 0x0f) | ((size == B) ? 0x0 : 0x10);
 			if (op2->value_o < 0 || op2->value_o > (size == B ? 7 : 15)) Prog_Error(E_CONSTANT);
 			WCode[0] = opr | (rf << 4) | (op2->value_o & 0x0F);
 		} else if (op1->type_o == t_normal) {
@@ -1247,19 +1258,18 @@ bit_op(opr, size)
 		} else if (op1->type_o == t_x) {
 			/* addres(Rd), #n */
 			if (!wreg(op1->reg_o) || op1->reg_o == 0) Prog_Error(E_REG);
-			int rf = (regfield(op1->reg_o) & 0x0f) | ((size == B) ? 0x0 : 0x10);
+			int rf = (regfield((int)op1->reg_o) & 0x0f) | ((size == B) ? 0x0 : 0x10);
 			if (op2->value_o < 0 || op2->value_o > (size == B ? 7 : 15)) Prog_Error(E_CONSTANT);
 			WCode[0] = (opr | 0x4000) | (rf << 4) | (op2->value_o & 0x0F);
 			rel_val(op1, W);
 		}
 	} else if (op2->type_o == t_reg) {
 		/* dynamic bit: bit number in word register, target may be byte reg */
-		int rf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
-		WCode[0] = opr | regfield(op2->value_o);
+		int rf = (size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o);
+		WCode[0] = opr | regfield((int)op2->value_o);
 		WCode[1] = rf << 8;
 		Code_length = 4;
 	} else Prog_Error(E_OPERAND);
-#endif
 }
 
 
@@ -1277,7 +1287,7 @@ shift_op(opr, size, sign)
 	op2 = &operands[1];
 
 	if (op1->type_o != t_reg) { Prog_Error(E_OPERAND); return; }
-	rf = (size == B) ? bregfield(op1->value_o) : regfield(op1->value_o);
+	rf = (size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o);
 
 	if (op2->type_o == t_immed) {
 		count = op2->value_o * sign;
@@ -1287,7 +1297,7 @@ shift_op(opr, size, sign)
 	} else if (op2->type_o == t_reg) {
 		/* dynamic shift: count in register (always word reg) */
 		WCode[0] = opr | (rf << 4);
-		WCode[1] = regfield(op2->value_o) << 8;
+		WCode[1] = regfield((int)op2->value_o) << 8;
 		Code_length = 4;
 	} else Prog_Error(E_OPERAND);
 }
@@ -1306,7 +1316,7 @@ rotate_op(opr, size)
 	if (op2->type_o != t_immed) { Prog_Error(E_OPERAND); return; }
 	if (op2->value_o != 1 && op2->value_o != 2) Prog_Error(E_CONSTANT);
 
-	WCode[0] = opr | (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 4);
+	WCode[0] = opr | (((size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o)) << 4);
 	if (op2->value_o == 2) WCode[0] |= 0x0002;	/* 2-bit rotate flag */
 }
 
@@ -1324,12 +1334,12 @@ mult_op(opr)
 	op1 = operands;
 	op2 = &operands[1];
 
-	if (op1->type_o != t_reg || !lreg(op1->value_o)) { Prog_Error(E_REG); return; }
-	rf1 = regfield(op1->value_o);
+	if (op1->type_o != t_reg || !lreg((int)op1->value_o)) { Prog_Error(E_REG); return; }
+	rf1 = regfield((int)op1->value_o);
 
 	/* rr, reg: R mode */
-	if (op2->type_o == t_reg && wreg(op2->value_o)) {
-		rf2 = regfield(op2->value_o);
+	if (op2->type_o == t_reg && wreg((int)op2->value_o)) {
+		rf2 = regfield((int)op2->value_o);
 		WCode[0] = (opr | 0x8000) | (rf2 << 4) | rf1;
 	/* rr, @reg: IR mode */
 	} else if (op2->type_o == t_ireg) {
@@ -1365,10 +1375,10 @@ multl_op(opr)
 	op1 = operands;
 	op2 = &operands[1];
 
-	if (op1->type_o != t_reg || !qreg(op1->value_o)) { Prog_Error(E_REG); return; }
-	if (op2->type_o != t_reg || !lreg(op2->value_o)) { Prog_Error(E_REG); return; }
+	if (op1->type_o != t_reg || !qreg((int)op1->value_o)) { Prog_Error(E_REG); return; }
+	if (op2->type_o != t_reg || !lreg((int)op2->value_o)) { Prog_Error(E_REG); return; }
 
-	WCode[0] = (opr | 0x8000) | (regfield(op2->value_o) << 4) | regfield(op1->value_o);
+	WCode[0] = (opr | 0x8000) | (regfield((int)op2->value_o) << 4) | regfield((int)op1->value_o);
 }
 
 
@@ -1385,12 +1395,12 @@ div_op(opr)
 	op1 = operands;
 	op2 = &operands[1];
 
-	if (op1->type_o != t_reg || !lreg(op1->value_o)) { Prog_Error(E_REG); return; }
-	rf1 = regfield(op1->value_o);
+	if (op1->type_o != t_reg || !lreg((int)op1->value_o)) { Prog_Error(E_REG); return; }
+	rf1 = regfield((int)op1->value_o);
 
 	/* rr, reg: R mode */
-	if (op2->type_o == t_reg && wreg(op2->value_o)) {
-		rf2 = regfield(op2->value_o);
+	if (op2->type_o == t_reg && wreg((int)op2->value_o)) {
+		rf2 = regfield((int)op2->value_o);
 		WCode[0] = (opr | 0x8000) | (rf2 << 4) | rf1;
 	/* rr, @reg: IR mode */
 	} else if (op2->type_o == t_ireg) {
@@ -1423,10 +1433,10 @@ divl_op(opr)
 	op1 = operands;
 	op2 = &operands[1];
 
-	if (op1->type_o != t_reg || !qreg(op1->value_o)) { Prog_Error(E_REG); return; }
-	if (op2->type_o != t_reg || !lreg(op2->value_o)) { Prog_Error(E_REG); return; }
+	if (op1->type_o != t_reg || !qreg((int)op1->value_o)) { Prog_Error(E_REG); return; }
+	if (op2->type_o != t_reg || !lreg((int)op2->value_o)) { Prog_Error(E_REG); return; }
 
-	WCode[0] = (opr | 0x8000) | (regfield(op2->value_o) << 4) | regfield(op1->value_o);
+	WCode[0] = (opr | 0x8000) | (regfield((int)op2->value_o) << 4) | regfield((int)op1->value_o);
 }
 
 
@@ -1593,7 +1603,7 @@ djnz_op(opr, size)
 	if (offs > 0 || offs < -254 || (offs & 1)) Prog_Error(E_OFFSET);
 
 	WCode[0] = 0xF000
-		 | (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 8)
+		 | (((size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o)) << 8)
 		 | (size == B ? 0 : 0x80)
 		 | (((-offs) >> 1) & 0x7F);
 }
@@ -1612,8 +1622,8 @@ push_op(size)
 	if (op1->reg_o == 0) { Prog_Error(E_REG); return; }
 
 	if (size == W) {
-		if (op2->type_o == t_reg && wreg(op2->value_o)) {
-			WCode[0] = 0x9300 | (regfield(op1->reg_o) << 4) | regfield(op2->value_o);
+		if (op2->type_o == t_reg && wreg((int)op2->value_o)) {
+			WCode[0] = 0x9300 | (regfield(op1->reg_o) << 4) | regfield((int)op2->value_o);
 		} else if (op2->type_o == t_immed) {
 			/* PUSH @Rd,#data: 0x0D_Rd_9 + data */
 			WCode[0] = 0x0D09 | (regfield(op1->reg_o) << 4);
@@ -1630,10 +1640,10 @@ push_op(size)
 			rel_val(op2, W);
 		} else Prog_Error(E_OPERAND);
 	} else { /* L */
-		if (op2->type_o == t_reg && lreg(op2->value_o)) {
-			WCode[0] = 0x9100 | (regfield(op1->reg_o) << 4) | regfield(op2->value_o);
+		if (op2->type_o == t_reg && lreg((int)op2->value_o)) {
+			WCode[0] = 0x9100 | (regfield(op1->reg_o) << 4) | regfield((int)op2->value_o);
 		} else if (op2->type_o == t_ireg) {
-			WCode[0] = 0x1100 | (regfield(op1->reg_o) << 4) | regfield(op2->value_o);
+			WCode[0] = 0x1100 | (regfield(op1->reg_o) << 4) | regfield((int)op2->value_o);
 		} else Prog_Error(E_OPERAND);
 	}
 }
@@ -1652,19 +1662,19 @@ pop_op(size)
 	if (op2->reg_o == 0) { Prog_Error(E_REG); return; }
 
 	if (size == W) {
-		if (op1->type_o == t_reg && wreg(op1->value_o)) {
-			WCode[0] = 0x9700 | (regfield(op2->reg_o) << 4) | regfield(op1->value_o);
+		if (op1->type_o == t_reg && wreg((int)op1->value_o)) {
+			WCode[0] = 0x9700 | (regfield(op2->reg_o) << 4) | regfield((int)op1->value_o);
 		} else if (op1->type_o == t_ireg) {
-			WCode[0] = 0x1700 | (regfield(op2->reg_o) << 4) | regfield(op1->value_o);
+			WCode[0] = 0x1700 | (regfield(op2->reg_o) << 4) | regfield((int)op1->value_o);
 		} else if (op1->type_o == t_normal) {
 			WCode[0] = 0x5700 | (regfield(op2->reg_o) << 4);
 			rel_val(op1, W);
 		} else Prog_Error(E_OPERAND);
 	} else { /* L */
-		if (op1->type_o == t_reg && lreg(op1->value_o)) {
-			WCode[0] = 0x9500 | (regfield(op2->reg_o) << 4) | regfield(op1->value_o);
+		if (op1->type_o == t_reg && lreg((int)op1->value_o)) {
+			WCode[0] = 0x9500 | (regfield(op2->reg_o) << 4) | regfield((int)op1->value_o);
 		} else if (op1->type_o == t_ireg) {
-			WCode[0] = 0x1500 | (regfield(op2->reg_o) << 4) | regfield(op1->value_o);
+			WCode[0] = 0x1500 | (regfield(op2->reg_o) << 4) | regfield((int)op1->value_o);
 		} else Prog_Error(E_OPERAND);
 	}
 }
@@ -1683,14 +1693,14 @@ block_op(opr, w2_flags)
 	op3 = &operands[2];
 
 	if (op1->type_o != t_ireg || op2->type_o != t_ireg ||
-	    op3->type_o != t_reg || !wreg(op3->value_o)) {
+	    op3->type_o != t_reg || !wreg((int)op3->value_o)) {
 		Prog_Error(E_OPERAND);
 		return;
 	}
 	if (op1->reg_o == 0 || op2->reg_o == 0) { Prog_Error(E_REG); return; }
 
 	WCode[0] = opr | (regfield(op2->reg_o) << 4);
-	WCode[1] = (regfield(op3->value_o) << 8) | (regfield(op1->reg_o) << 4) | w2_flags;
+	WCode[1] = (regfield((int)op3->value_o) << 8) | (regfield(op1->reg_o) << 4) | w2_flags;
 	Code_length = 4;
 }
 
@@ -1705,15 +1715,15 @@ cpblk_op(opr)
 	op2 = &operands[1];
 	op3 = &operands[2];
 
-	if (op1->type_o != t_reg || !wreg(op1->value_o) ||
-	    op2->type_o != t_ireg || op3->type_o != t_reg || !wreg(op3->value_o)) {
+	if (op1->type_o != t_reg || !wreg((int)op1->value_o) ||
+	    op2->type_o != t_ireg || op3->type_o != t_reg || !wreg((int)op3->value_o)) {
 		Prog_Error(E_OPERAND);
 		return;
 	}
 	if (op2->reg_o == 0) { Prog_Error(E_REG); return; }
 
 	WCode[0] = opr | (regfield(op2->reg_o) << 4);
-	WCode[1] = (regfield(op3->value_o) << 8) | (regfield(op1->value_o) << 4) | 0x08;
+	WCode[1] = (regfield((int)op3->value_o) << 8) | (regfield((int)op1->value_o) << 4) | 0x08;
 	Code_length = 4;
 }
 
@@ -1732,39 +1742,10 @@ io_op(r_opr, da_opr, size)
 	       	Prog_Error(E_NUMOPS);
 	       	return;
 	}
-#if 0
+	
 	op1 = operands;		/* data register */
 	op2 = &operands[1];	/* port: @reg or #imm */
 
-	if ((op1->type_o == t_reg) && ((r_opr == 0x3d00) || (r_opr == 0x3c00))) {
-		/* IN R,@R   IN  R,#addr */
-		if (op2->type_o == t_ireg) {
-			/* R mode: port in indirect register */
-			WCode[0] = r_opr | (regfield(op2->reg_o) << 4)
-				| ((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o));
-		} else if (op2->type_o == t_immed) {
-			/* DA mode: port is immediate address */
-			WCode[0] = da_opr
-				| (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 4);
-			rel_val(op2, W);
-		} else 
-			Prog_Error(E_OPERAND);
-	} else 	if ((op2->type_o == t_reg) && ((r_opr == 0x3f00) || (r_opr == 0x3e00))) {
-		/* OUT @R,R   OUT #addr,R */
-		if (op1->type_o == t_ireg) {
-			/* R mode: port in indirect register */
-			WCode[0] = r_opr | (regfield(op1->reg_o) << 4)
-				| ((size == B) ? bregfield(op2->value_o) : regfield(op2->value_o));
-		} else if (op1->type_o == t_immed) {
-			/* DA mode: port is immediate address */
-			WCode[0] = da_opr
-				| (((size == B) ? bregfield(op2->value_o) : regfield(op2->value_o)) << 4);
-			rel_val(op1, W);
-		} else
-			Prog_Error(E_OPERAND);
-	} else
-		Prog_Error(E_OPERAND);
-#else
 	if ((r_opr == 0x3d00) || (r_opr == 0x3c00)) {
 		/* IN R,@R   IN  R,#addr */
 		op1 = operands;
@@ -1778,15 +1759,14 @@ io_op(r_opr, da_opr, size)
 		if (op2->type_o == t_ireg) {
 			/* R mode: port in indirect register */
 			WCode[0] = r_opr | (regfield(op2->reg_o) << 4)
-				| ((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o));
+				| ((size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o));
 		} else if (op2->type_o == t_immed) {
 			/* DA mode: port is immediate address */
 			WCode[0] = da_opr
-				| (((size == B) ? bregfield(op1->value_o) : regfield(op1->value_o)) << 4);
+				| (((size == B) ? bregfield((int)op1->value_o) : regfield((int)op1->value_o)) << 4);
 			rel_val(op2, W);
 		} else
 			Prog_Error(E_OPERAND);
 	} else 
 		Prog_Error(E_OPERAND);
-#endif
 }

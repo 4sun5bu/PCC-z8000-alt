@@ -6,6 +6,12 @@
 #include "ar.h"
 #include "a.out.h"
 
+/* Portable archives have a byte-defined format, independent of the host's
+ * ar.h (V7 Unix uses a different, binary archive header). */
+#define ARMAG "!<arch>\n"
+#define SARMAG 8
+#define ARFMAG "`\n"
+
 /* link editor for Z8000 */
 
 #define NOVLY	16
@@ -13,6 +19,7 @@
 #define	NSYM	4003
 #define	NSYMPR	4000
 #define TABSZ	700
+#define SYMBLOCK 32
 
 typedef struct symbol *symp;
 struct symbol
@@ -54,7 +61,9 @@ arce arcelast = NULL;			/* last entry in this entry list */
 struct exec filhdr;			/* header file for current file */
 struct symbol cursym;			/* current symbol */
 char csymbuf[SYMLENGTH];		/* buffer for current symbol name */
-struct symbol symtab[NSYM];		/* actual symbols */
+/* Stable addresses, without reserving the maximum table in 16-bit data. */
+symp symblocks[(NSYM+SYMBLOCK-1)/SYMBLOCK];
+symp symbolat(), nextsym();
 symp lastsym;				/* last symbol entered */
 int symindex;				/* next available symbol table entry */
 symp hshtab[NSYM+2];			/* hash table for symbols */
@@ -86,6 +95,7 @@ int	Sflag;		/* discard all except locals and globals*/
 int	rflag;		/* preserve relocation bits, don't define common */
 int	sflag;		/* discard all symbols */
 int	dflag;		/* define common even with rflag */
+int	iflag;		/* separate I/D, 0411 */
 int	nflag = 0;	/* create a 410 file */
 int	iflag;		/* I/D Space separated */
 
@@ -166,6 +176,10 @@ void bletch(char *fmt, ...);
 void dread(char *pos, int size, int count, FILE *file);
 void dcopy(FILE *in, FILE *out, long count);
 void get68(FILE *file, char *p, int c);
+long relext();
+long relcmd();
+long atox();
+int nerrors;	/* number of errors reported by error() */
 
 /*
 	main -	The link editor works in two passes.  In pass 1, symbols
@@ -188,7 +202,9 @@ char **argv;
 	for (argp = arglist; argp; argp = argp->arg_next)
 		load2arg(filename = argp->arg_name);
 	finishout();
-	exit(0);
+	/* An image is still written, but a link with undefined or multiply
+	   defined symbols or bad relocation commands is not a success. */
+	exit(nerrors || nund ? 1 : 0);
 }
 
 /* progargs -	Process command arguments */
@@ -229,67 +245,45 @@ char **argv;
 	char *flagp = &argv[argnum][1];
 	char c;
 
-	while(c = *flagp++)
-		switch(c) {
-		case 'o':
-			if (++argnum >= argc)
-				error(e1, c);
-			else
-				ofilename = argv[argnum];
-			break;
-		case 'L':
-			if (++argnum >= argc)
-				error(e1, c);
-			else
-				strcpy(libdir, argv[argnum]);
-			break;
-		case 'u':
-			if (++argnum >= argc)
-				error(e1, c);
-			else
-				enter(slookup(argv[argnum]));
-			break;
-		case 'e':
-			if (++argnum >= argc)
-				error(e1, c);
-			else
-				enter(slookup(argv[argnum]));
-			entrypt = lastsym;
-			error("-e is currently ignored");
-			break;
-		case 'D':
-			if (++argnum >= argc)
-				error(e1, c);
-			else
-				dsize = atol(argv[argnum]);
-			break;
-		case 'R':
-			if (++argnum >= argc)
-				error(e1, c);
-			else
-				torigin = atox(argv[argnum]);
-			break;
-		case 'l':
-			newarg(argv[argnum]); return;
-		case 'x':
-			xflag++; break;
-		case 'X':
-			Xflag++; break;
-		case 'S':
-			Sflag++; break;
-		case 'r':
-			rflag++; break;
-		case 's':
-			sflag++; xflag++; break;
-		case 'd':
-			dflag++; break;
-		case 'n':
-			nflag++; break;
-		case 'i':
-			iflag++; break;
-		default:
-			error(e2, c);
-		}
+	while(c = *flagp++) switch(c)
+	{
+	case 'o':
+		if (++argnum >= argc) error(e1, c);
+		else ofilename = argv[argnum];
+		break;
+	case 'L':
+		if (++argnum >= argc) error(e1, c);
+		else strcpy(libdir, argv[argnum]);
+		break;
+	case 'u':
+		if (++argnum >= argc) error(e1, c);
+		else enter(slookup(argv[argnum]));
+		break;
+	case 'e':
+		if (++argnum >= argc) error(e1, c);
+		else enter(slookup(argv[argnum]));
+		entrypt = lastsym;
+		error("-e is currently ignored");
+		break;
+	case 'D':
+		if (++argnum >= argc) error(e1, c);
+		else dsize = atol(argv[argnum]);
+		break;
+	case 'R':
+		if (++argnum >= argc) error(e1, c);
+		else torigin = atox(argv[argnum]);
+		break;
+	case 'l': newarg(argv[argnum]); return;
+	case 'x': xflag++; break;
+	case 'X': Xflag++; break;
+	case 'S': Sflag++; break;
+	case 'r': rflag++; break;
+	case 's': sflag++; xflag++; break;
+	case 'd': dflag++; break;
+	case 'n': nflag++; break;
+	case 'i': iflag++; break;
+	default:	error(e2, c);
+	}
 }
 
 long atox(s)
@@ -372,10 +366,11 @@ load1(sloc, libflg)
 long sloc;	/* location of first byte of this file */
 int libflg;	/* 1 => loading a library, 0 else */
 {
-	long loc = sloc;	/* current position in file */
-	long endpos;		/* position after symbol table */
-	int savindex;		/* symbol table index on entry */
-	int ndef;			/* number of symbols defined */
+	long loc = sloc;/* current position in file */
+	long endpos;	/* position after symbol table */
+	int savindex;	/* symbol table index on entry */
+	int ndef;	/* number of symbols defined */
+	symp sp;
 
 	readhdr(sloc);
 
@@ -406,8 +401,11 @@ int libflg;	/* 1 => loading a library, 0 else */
 	 * No symbols defined by this library member.
 	 * Rip out the hash table entries and reset the symbol table.
 	 */
-	while (symindex>savindex)
-		*symtab[--symindex].shash = 0;
+	while (symindex>savindex) {
+		sp = symbolat(--symindex);
+		*sp->shash = 0;
+		free(sp->sname);
+	}
 	return(0);
 }
 
@@ -493,12 +491,10 @@ middle()
 	/* Now set symbols to their final value */
 	tsize = (tsize + 1) & ~01;		/* move to word boundry */
 
-	if (nflag)
-		dorigin = torigin+(tsize+(PAGESIZE - 1)) & ~(PAGESIZE - 1);
-	else
-		dorigin = torigin + tsize;
-	if (iflag)
-		dorigin = 0;
+	if (iflag) dorigin = 0;
+	else if (nflag) dorigin = torigin+(tsize+(PAGESIZE - 1)) & ~(PAGESIZE - 1);
+	else dorigin = torigin + tsize;
+
 	dsize = (dsize + 1) & ~01;		/* move to word boundry */
 	corigin = dorigin + dsize;		/* common after data */
 	borigin = corigin + csize;		/* bss after common area */
@@ -507,9 +503,14 @@ middle()
 	nund = 0;				/* no undefined initially */
 /*	ssize = size of local symbols to be entered in load2		*/
 	doffset = 0;				/* beginning of data seg */
-	for (sp = symtab; sp < &symtab[symindex]; sp++)
-		sym2(sp);
+	for (sp = symindex ? symbolat(0) : NULL; sp; sp = nextsym(sp)) sym2(sp);
 	bsize += csize;
+	/* Check before 16-bit a.out fields and relocations can truncate sizes. */
+	if (iflag && (rflag || nflag || torigin != 0))
+		fatal("-i requires origin zero and cannot be combined with -r or -n");
+	if (rflag == 0 && (tsize > 65535L || dsize > 65535L || bsize > 65535L ||
+	    (iflag ? dsize+bsize > 65536L : dorigin+dsize+bsize > 65536L)))
+		fatal("executable exceeds 16-bit address space");
 }
 
 /* common -	Set up the common area. */
@@ -519,8 +520,9 @@ common()
 	long val;
 
 	csize = 0;
-	for (sp = symtab; sp < &symtab[symindex]; sp++)
-		if (sp->s.stype == EXTERN+UNDEF && ((val = sp->s.svalue) != 0)) {
+	for (sp = symindex ? symbolat(0) : NULL; sp; sp = nextsym(sp))
+		if (sp->s.stype == EXTERN+UNDEF && ((val = sp->s.svalue) != 0))
+		{
 			val = (val + 1) & ~01;	/* word boundry */
 			if (sp->sname && (strcmp(sp->sname, "buf") == 0 || strcmp(sp->sname, "bfreelis") == 0 ||
 				strcmp(sp->sname, "buffers") == 0))
@@ -605,30 +607,23 @@ int  type;			/* its type */
 
 setupout()
 {
-	if (nflag)
-		filhdr.a_magic = NMAGIC;
-	else if (iflag)
-		filhdr.a_magic = IMAGIC;
-	else
-		filhdr.a_magic = FMAGIC;
+	if (nflag) filhdr.a_magic = NMAGIC;
+	else if (iflag) filhdr.a_magic = IMAGIC;
+	else filhdr.a_magic = FMAGIC;
 	filhdr.a_text = tsize;
 	filhdr.a_data = dsize;
 	filhdr.a_bss = bsize;
 	filhdr.a_rtsiz = rflag? rtsize: 0;
 	filhdr.a_rdsiz = rflag? rdsize: 0;
 	filhdr.a_syms = sflag? 0:ssize;
-	if (entrypt) {
-		if (entrypt->s.stype!=EXTERN+TEXT)
-			error(e7);
-		else
-			filhdr.a_entry = entrypt->s.svalue;
-	} else
-		filhdr.a_entry = 0;
+	if (entrypt)
+	{
+		if (entrypt->s.stype!=EXTERN+TEXT) error(e7);
+		else filhdr.a_entry = entrypt->s.svalue;
+	} else filhdr.a_entry = 0;
 	filhdr.a_entry = torigin;
-	if ((tout = fopen(ofilename, "w")) == NULL)
-		fatal(e8, ofilename);
-	if ((dout = fopen(ofilename, "r+")) == NULL)
-		fatal(e9);
+	if ((tout = fopen(ofilename, "w")) == NULL) fatal(e8, ofilename);
+	if ((dout = fopen(ofilename, "r+")) == NULL) fatal(e9);
 	fseek(dout, (long)(DATAPOS), 0);
 	if (rflag) {
 		if ((trout = fopen(ofilename, "r+")) == NULL)
@@ -638,14 +633,14 @@ setupout()
 			fatal(e9);
 		fseek(drout, (long)RDATAPOS, 0);	/* to data reloc */
 	}
-	put68(tout, &filhdr.a_magic, 2);
-	put68(tout, &filhdr.a_text, 2);
-	put68(tout, &filhdr.a_data, 2);
-	put68(tout, &filhdr.a_bss, 2);
-	put68(tout, &filhdr.a_syms, 2);
-	put68(tout, &filhdr.a_entry, 2);
-	put68(tout, &filhdr.a_rtsiz, 2);
-	put68(tout, &filhdr.a_rdsiz, 2);
+	put16(tout, &filhdr.a_magic);
+	put16(tout, &filhdr.a_text);
+	put16(tout, &filhdr.a_data);
+	put16(tout, &filhdr.a_bss);
+	put16(tout, &filhdr.a_syms);
+	put16(tout, &filhdr.a_entry);
+	put16(tout, &filhdr.a_rtsiz);
+	put16(tout, &filhdr.a_rdsiz);
 }
 /* load2arg -	Load a named file or an archive */
 
@@ -656,7 +651,7 @@ char *cp;
 	arce entry;		/* pointer to current entry */
 	switch (getfile(cp)) {
 	case FMAGIC:			/* normal file */
-		short tmp;
+		unsigned short tmp;
 		get68(text, &tmp, 2); filhdr.a_magic = tmp;
 		get68(text, &tmp, 2); filhdr.a_text = tmp;
 		get68(text, &tmp, 2); filhdr.a_data = tmp;
@@ -668,8 +663,9 @@ char *cp;
 		load2(0L);
 		break;
 	case ARCMAGIC:			/* archive */
-		for(entry=arclist->arc_e_list; entry; entry=entry->arc_e_next) {
-			short tmp;
+		for(entry=arclist->arc_e_list; entry; entry=entry->arc_e_next)
+		{
+			unsigned short tmp;
 			position = entry->arc_offs;
 			fseek(text, position, 0);
 			get68(text, &tmp, 2); filhdr.a_magic = tmp;
@@ -894,33 +890,34 @@ finishout()
 {
 	register symp sp;
 
-	long symoff = HDRSIZE + tsize + dsize;
-	if (rflag)
-		symoff += rtsize + rdsize;
-	fseek(tout, symoff, 0);
+	{
+		long symoff = HDRSIZE + tsize + dsize;
+		if (rflag) symoff += rtsize + rdsize;
+		fseek(tout, symoff, 0);
+	}
+	if (sflag == 0) for (sp = symindex ? symbolat(0) : NULL; sp; sp = nextsym(sp))
+	{
+		register int i;
+		register char *cp;
+		short n_type;
+		unsigned short n_value;
+		char n_name[8];
 
-	if (sflag == 0)
-		for (sp = symtab; sp < &symtab[symindex]; sp++) {
-			register int i;
-			register char *cp;
-			short n_type, n_value;
-			char n_name[8];
-
-			/* Write 8-char name, NUL-padded */
-			for (i = 0; i < 8; i++)
-				n_name[i] = 0;
-			cp = sp->sname;
-			for (i = 0; i < 8 && *cp; i++)
-				n_name[i] = *cp++;
-			fwrite(n_name, 8, 1, tout);
-			/* Write n_type (convert from internal encoding) */
-			n_type = sp->s.stype >> 8;
-			put68(tout, &n_type, 2);
-			/* Write n_value */
-			n_value = (short)sp->s.svalue;
-			put68(tout, &n_value, 2);
-			if (ferror(tout))
-				fatal(e14, ofilename);
+		/* Write 8-char name, NUL-padded */
+		for (i = 0; i < 8; i++)
+			n_name[i] = 0;
+		cp = sp->sname;
+		for (i = 0; i < 8 && *cp; i++)
+			n_name[i] = *cp++;
+		fwrite(n_name, 8, 1, tout);
+		/* Write n_type (convert from internal encoding) */
+		n_type = sp->s.stype >> 8;
+		put68(tout, &n_type, 2);
+		/* Write n_value */
+		n_value = (short)sp->s.svalue;
+		put68(tout, &n_value, 2);
+		if (ferror(tout))
+			fatal(e14, ofilename);
 	}
 	fclose(tout);
 	fclose(dout);
@@ -1018,23 +1015,42 @@ char *s;
 	return(lookup());
 }
 
+/* Symbol blocks retain stable pointers across allocation and archive rollback. */
+symp
+symbolat(index)
+unsigned index;
+{
+	unsigned block = index / SYMBLOCK;
+	if (index >= NSYM) fatal(e17);
+	if (symblocks[block] == NULL) {
+		symblocks[block] = (symp)calloc(SYMBLOCK, sizeof(struct symbol));
+		if (symblocks[block] == NULL) fatal(e17);
+	}
+	return(symblocks[block] + index % SYMBLOCK);
+}
+
+symp
+nextsym(sp)
+symp sp;
+{
+	if (sp->sindex + 1 >= symindex) return(NULL);
+	return(symbolat(sp->sindex + 1));
+}
+
 /* enter -	Make sure that cursym is installed in symbol table.
 		Called with a pointer to a symbol with the same name
 		or NULL if lookup failed.  Returns 1 if the symbol
 		was new, or 0 if it was already present.
 */
-
 enter(sp)
 register symp sp;
 {
 	symp *hp;		/* pointer to place in hash table */
 	if (sp == NULL) {
 		hp = hash(cursym.sname);
-		if (symindex>=NSYM)
-			fatal(e17);
-		lastsym = sp = &symtab[symindex];
-		if (*hp)
-			bletch("hash table conflict");
+		if (symindex>=NSYM) fatal(e17);
+		lastsym = sp = symbolat(symindex);
+		if (*hp) bletch("hash table conflict");
 		*hp = sp;
 		if((sp->sname = (char *)calloc(1, cursym.snlength+1)) == NULL)
 			fatal(e17);
@@ -1091,7 +1107,7 @@ readhdr(pos)
 long pos;
 {
 	register long st, sd;
-	short tmp;
+	unsigned short tmp;
 	fseek(text, pos, 0);
 	get68(text, &tmp, 2); filhdr.a_magic = tmp;
 	get68(text, &tmp, 2); filhdr.a_text = tmp;
@@ -1116,7 +1132,8 @@ long pos;
 long getsym()
 {
 	register int i;
-	short n_type, n_value;
+	short n_type;
+	unsigned short n_value;
 	char n_name[8];
 
 	/* Read 8-byte name */
@@ -1148,6 +1165,7 @@ long getsym()
 error(fmt, a1, a2, a3, a4, a5)
 char *fmt;
 {
+	nerrors++;
 	printf("ldz8: ");
 	printf(fmt, a1, a2, a3, a4, a5);
 	printf("\n");
@@ -1277,4 +1295,13 @@ register char	*p;
 		putc(*(long *)p >> 8, file);
 		putc(*(long *)p, file);
 	}
+}
+
+/* Narrow a numeric value, not the first two bytes of its host storage. */
+put16(file, value)
+FILE *file;
+long value;
+{
+	putc((unsigned)(value >> 8), file);
+	putc((unsigned)value, file);
 }

@@ -11,7 +11,7 @@ cpp.o: cpp.c
 
 cpy.o: cpy.y yylex.c
 	$(YACC) cpy.y
-	$(CC) $(CFLAG) -c y.tab.c -o cpy.o
+	$(CC) $(CFLAGS) -c y.tab.c -o cpy.o
 
 install:
 	cp cppV7 /usr/local/bin

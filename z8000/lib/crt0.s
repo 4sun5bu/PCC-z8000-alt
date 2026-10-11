@@ -1,0 +1,50 @@
+!
+! crt0.az8 -- C runtime startup for Z8002 (nonsegmented)
+!
+! Entry point: _start
+! Sets up stack, zeroes BSS, calls main, calls exit
+!
+
+	.text
+	.globl	_start
+	.globl	_main
+	.globl	_exit
+	.globl	_etext
+	.globl	_edata
+	.globl	_end
+
+_start:
+	! Set up stack pointer (SP = R15)
+	! Stack is set by loader or hardware; assume already valid
+
+	! Set up frame pointer
+	LD	R14, SP
+
+	! Zero BSS segment
+	! From _edata to _end
+	LDA	R8, _edata
+	LDA	R9, _end
+	CLR	R0
+.Lbzloop:
+	CP	R8, R9
+	JR GE, .Lbzdone
+	LDB	@R8, RL0
+	INC	R8, #1
+	JR	.Lbzloop
+.Lbzdone:
+
+	! Call main(argc, argv, envp)
+	! For standalone: argc=0, argv=NULL, envp=NULL
+	CLR	R0
+	PUSH	@SP, R0		! envp = NULL
+	PUSH	@SP, R0		! argv = NULL
+	PUSH	@SP, R0		! argc = 0
+	CALL	_main
+	INC	SP, #6		! clean up args
+
+	! Call exit with return value from main (in R0)
+	PUSH	@SP, R0
+	CALL	_exit
+
+	! Should not return, but just in case
+	JR	_start

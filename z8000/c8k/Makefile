@@ -30,10 +30,6 @@ xdefs.o: manifest mfile1 macdefs xdefs.c
 cgram.o: manifest mfile1 macdefs cgram.c
 	cc -c $(CFLAGS) cgram.c
 
-cgram.c: cgram.y
-	yacc cgram.y
-	mv y.tab.c cgram.c
-
 comm1.o: manifest mfile1 common macdefs comm1.c
 	cc -c $(CFLAGS) comm1.c
 

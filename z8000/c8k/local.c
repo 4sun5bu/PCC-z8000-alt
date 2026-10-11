@@ -77,6 +77,15 @@ clocal(p) NODE *p; {
 		break;
 
 	case PCONV:
+		if( p->in.left->in.op == ICON ){
+			/* a constant keeps the pointer's own type information,
+			   e.g. (struct user *)0xF000 where 0xF000 is a long */
+			if( p->in.left->in.type==LONG || p->in.left->in.type==ULONG )
+				p->in.left->tn.lval &= 0XFFFFL;
+			}
+		else if(!ISPTR(p->in.left->in.type) && (p->in.left->in.type==LONG || p->in.left->in.type==ULONG || p->in.left->in.type==CHAR || p->in.left->in.type==UCHAR)) {
+			p->in.op=SCONV; return clocal(p);
+		}
 		/* pointer conversions are trivial on Z8000 since ptrs = ints = 16 bits */
 		/* just inherit the type */
 		p->in.left->in.type = p->in.type;
@@ -88,12 +97,22 @@ clocal(p) NODE *p; {
 	case SCONV:
 		m = (p->in.type == FLOAT || p->in.type == DOUBLE );
 		ml = (p->in.left->in.type == FLOAT || p->in.left->in.type == DOUBLE );
-		if( m != ml ) break;
+		if(m && ml && p->in.left->in.op==FCON) {
+			if(p->in.type==FLOAT) p->in.left->fpn.dval=(float)p->in.left->fpn.dval;
+			p->in.left->in.type=p->in.type; p->in.op=FREE; return p->in.left;
+		}
+		if( m || ml ) { if(p->in.type==p->in.left->in.type) { p->in.op=FREE; return p->in.left; } break; }
 
 		/* now, look for conversions downwards */
 
 		m = p->in.type;
 		ml = p->in.left->in.type;
+		/* Widen bytes through a word before allocating a long pair. */
+		if( (m==LONG || m==ULONG) && (ml==CHAR || ml==UCHAR) && p->in.left->in.op!=ICON ){
+			int wt = ml==CHAR ? INT : UNSIGNED;
+			p->in.left = makety( p->in.left, wt, 0, wt );
+			break;
+			}
 		if( p->in.left->in.op == ICON ){ /* simulate the conversion here */
 			CONSZ val;
 			val = p->in.left->tn.lval;
@@ -206,13 +225,30 @@ fincode( d, sz ) double d; {
 	/* inoff is updated to have the proper final value */
 	/* on the target machine, write it out in octal! */
 
-	register short *mi = (short *)&d;
+	/* Host and target use IEEE float/double. Read their representation as
+	 * bytes so native builds need neither 64-bit integers nor modern headers.
+	 * Emit most-significant bytes first on either host byte order. */
+	union { double d; float f; unsigned char b[sizeof(double)]; } value;
+	union { long n; unsigned char b[sizeof(long)]; } endian;
+	int i, count, first, second;
+	unsigned word;
 
-	if( sz==SZDOUBLE )
-		printf( "	.word	0x%x, 0x%x, 0x%x, 0x%x\n",
-		        mi[0], mi[1], mi[2], mi[3] );
-	else
-		printf( "	.word	0x%x, 0x%x\n", mi[0], mi[1] );
+	endian.n = 1;
+	if( sz==SZDOUBLE ) {
+		value.d = d;
+		count = sizeof(double);
+	} else {
+		value.f = (float)d;
+		count = sizeof(float);
+	}
+	printf("\t.word\t");
+	for( i=0; i<count; i+=2 ) {
+		first = endian.b[0] ? count-1-i : i;
+		second = endian.b[0] ? first-1 : first+1;
+		word = ((unsigned)value.b[first]<<8) | value.b[second];
+		printf(i ? ",%u" : "%u", word);
+	}
+	printf("\n");
 	inoff += sz;
 	}
 
@@ -247,7 +283,11 @@ exname( p ) char *p; {
 
 	register i;
 
-	for( i=0; *p&&i<NCHNAM; ++i ){
+	/* Every C name gets a leading underscore, as in the PDP-11 compiler.
+	   That keeps C names apart from the names of the compiler's support
+	   routines (lmul, ldiv, fadd, ...), which have none. */
+	text[0] = '_';
+	for( i=1; *p&&i<NCHNAM; ++i ){
 		text[i] = *p++;
 		}
 

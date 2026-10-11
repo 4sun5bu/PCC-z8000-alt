@@ -18,6 +18,7 @@ long rtsize;		/* size of text relocation area */
 long rdsize;		/* size of data relocation area */
 
 char rname[STR_MAX];	/* name of file for relocation commands */
+char rdname[STR_MAX];	/* name of file for data relocation commands */
 
 struct exec filhdr;	/* header for a.out files, contains sizes */
 
@@ -28,12 +29,20 @@ struct exec filhdr;	/* header for a.out files, contains sizes */
 Rel_Header()
 {
 	if ((tout = fopen(Rel_name, "w")) == NULL ||
-		(dout = fopen(Rel_name, "r+")) == NULL)
+	    (dout = fopen(Rel_name, "r+")) == NULL)
 		Sys_Error("open on output file %s failed", Rel_name);
 
-	Concat(rname, Source_name, ".tmpr");
-	if ((rtout = fopen(rname, "w")) == NULL
-	 || (rdout = fopen(rname, "r+")) == NULL)
+	/* Text and data relocation commands go to separate files. They used to
+	 * share one, with the data commands placed after the space the first
+	 * pass estimated for text; when the final pass emitted more text
+	 * commands than estimated, the two ran into each other. */
+	/* V7 truncates directory names to 14 bytes. Appending .tmpr/.tmpd
+	 * to a source name can make these two files the same directory entry. */
+	sprintf(rname, "/tmp/ar%d", getpid());
+	sprintf(rdname, "/tmp/ad%d", getpid());
+	if ((rtout = fopen(rname, "w")) == NULL)
+		Sys_Error("open on output file %s failed", rname);
+	if ((rdout = fopen(rdname, "w")) == NULL)
 		Sys_Error("open on output file %s failed", rname);
 	filhdr.a_magic = FMAGIC;
 	filhdr.a_text = tsize;
@@ -45,18 +54,17 @@ Rel_Header()
 	filhdr.a_rdsiz = rdsize;
 
 	fseek(tout, 0L, 0);
-	put68(tout, &filhdr.a_magic, 2);
-	put68(tout, &filhdr.a_text, 2);
-	put68(tout, &filhdr.a_data, 2);
-	put68(tout, &filhdr.a_bss, 2);
-	put68(tout, &filhdr.a_syms, 2);
-	put68(tout, &filhdr.a_entry, 2);
-	put68(tout, &filhdr.a_rtsiz, 2);
-	put68(tout, &filhdr.a_rdsiz, 2);
+	put16(tout, filhdr.a_magic);
+	put16(tout, filhdr.a_text);
+	put16(tout, filhdr.a_data);
+	put16(tout, filhdr.a_bss);
+	put16(tout, filhdr.a_syms);
+	put16(tout, filhdr.a_entry);
+	put16(tout, filhdr.a_rtsiz);
+	put16(tout, filhdr.a_rdsiz);
 
 	fseek(tout, (long)(TEXTPOS), 0);	/* seek to start of text */
 	fseek(dout, (long)(DATAPOS), 0);
-	fseek(rdout, rtsize, 0);
 	rtsize = 0;
 	rdsize = 0;
 }
@@ -67,12 +75,10 @@ Rel_Header()
  */
 Fix_Rel()
 {
-	long ortsize;
 	long i;
 	long Sym_Write();
 	register FILE *fin, *fout;
 
-	ortsize = filhdr.a_rtsiz;
 	filhdr.a_rtsiz = rtsize;
 	filhdr.a_rdsiz = rdsize;
 	fclose(rtout);
@@ -87,8 +93,11 @@ Fix_Rel()
 	for (i=0; i<rtsize; i++)
 		putc(getc(fin), fout);
 
-	/* seek to start of data segment relocation commands */
-	fseek(fin, ortsize, 0);
+	/* then the data segment relocation commands */
+	fclose(fin);
+	unlink(rname);
+	if ((fin = fopen(rdname, "r")) == NULL)
+		Sys_Error("cannot reopen relocation file %s", rdname);
 	for (i=0; i<rdsize; i++)
 		putc(getc(fin), fout);
 
@@ -97,16 +106,16 @@ Fix_Rel()
 
 	/* now re-write header */
 	fseek(fout, 0, 0);
-	put68(tout, &filhdr.a_magic, 2);
-	put68(tout, &filhdr.a_text, 2);
-	put68(tout, &filhdr.a_data, 2);
-	put68(tout, &filhdr.a_bss, 2);
-	put68(tout, &filhdr.a_syms, 2);
-	put68(tout, &filhdr.a_entry, 2);
-	put68(tout, &filhdr.a_rtsiz, 2);
-	put68(tout, &filhdr.a_rdsiz, 2);
+	put16(tout, filhdr.a_magic);
+	put16(tout, filhdr.a_text);
+	put16(tout, filhdr.a_data);
+	put16(tout, filhdr.a_bss);
+	put16(tout, filhdr.a_syms);
+	put16(tout, filhdr.a_entry);
+	put16(tout, filhdr.a_rtsiz);
+	put16(tout, filhdr.a_rdsiz);
 	fclose(fin);
-	unlink(rname);
+	unlink(rdname);
 }
 
 /* rel_val -	Puts value of operand into next bytes of Code
@@ -180,7 +189,7 @@ Put_Text(code,length)
 /* Pad_Text -	Write zero bytes to pad out proper portion of file */
 
 Pad_Text(length)
- register length;
+ register long length;
  {
 	register FILE *f;
 	if (Pass != 2) return;

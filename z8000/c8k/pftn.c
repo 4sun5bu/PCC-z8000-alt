@@ -344,9 +344,9 @@ defid( q, class )  NODE *q; {
 		} else {
 		  int r = regvar&0377;
 		  if (szty(type) == 2) {
-		    if (r & 1) r--;  /* align to even for register pair */
+		    r = (r-1) & ~1;  /* both words must be at or below the free high register */
 		    p->offset = r;
-		    regvar = (r-2) | (regvar&~0377);
+		    regvar = (r-1) | (regvar&~0377);
 		  } else {
 		    p->offset = r;
 		    regvar = (r-1) | (regvar&~0377);
@@ -1558,7 +1558,9 @@ fixclass( class, type ) TWORD type; {
 		else if ( ISPTR(type) ) {
 		  if( ((regvar>>8)&0377) >= MINRVAR && cisreg( type ) ) return( class );
 		} else {
-		  if( (regvar&0377) >= MINRVAR && cisreg( type ) ) return( class );
+		  if( ((type==LONG || type==ULONG) ?
+		      (((regvar&0377)-1)&~1) : (regvar&0377)) >= MINRVAR &&
+		      cisreg( type ) ) return( class );
 		}
 		if( blevel == 1 ) return( PARAM );
 		else return( AUTO );
@@ -1669,7 +1671,7 @@ lookup( name, s) char *name; {
 			sp->sclass = SNULL;
 			return( i );
 			}
-		if( (sp->sflags & (STAG|SMOS|SHIDDEN)) != s ) goto next;
+		if( (sp->sflags & (STAG|SMOS|SLABEL|SHIDDEN)) != s ) goto next;
 		p = sp->sname;
 		q = name;
 		for( j=0; j<NCHNAM;++j ){
@@ -1695,7 +1697,7 @@ checkst(lev){
 
 	for( i=0, p=stab; i<SYMTSZ; ++i, ++p ){
 		if( p->stype == TNULL ) continue;
-		j = lookup( p->sname, p->sflags&(SMOS|STAG) );
+		j = lookup( p->sname, p->sflags&(SMOS|STAG|SLABEL) );
 		if( j != i ){
 			q = &stab[j];
 			if( q->stype == UNDEF ||
@@ -1714,7 +1716,7 @@ relook(p) register struct symtab *p; {  /* look up p again, and see where it lie
 	register struct symtab *q;
 
 	/* I'm not sure that this handles towers of several hidden definitions in all cases */
-	q = &stab[lookup( p->sname, p->sflags&(STAG|SMOS|SHIDDEN) )];
+	q = &stab[lookup( p->sname, p->sflags&(STAG|SMOS|SLABEL|SHIDDEN) )];
 	/* make relook always point to either p or an empty cell */
 	if( q->stype == UNDEF ){
 		q->stype = TNULL;
@@ -1725,6 +1727,20 @@ relook(p) register struct symtab *p; {  /* look up p again, and see where it lie
 		if( ++q >= &stab[SYMTSZ] ) q=stab;
 		}
 	return(q);
+	}
+
+lblname( id ){
+	/* The scanner enters every name as an ordinary identifier before the
+	   grammar knows it is a label. If nothing else uses that entry, mark
+	   it so that clearst() removes it at the end of the function without
+	   reporting it as undefined. */
+	register struct symtab *p;
+
+	p = &stab[id];
+	if( p->stype == UNDEF ){
+		p->sclass = LABEL;
+		p->slevel = 2;
+		}
 	}
 
 clearst( lev ){ /* clear entries of internal scope  from the symbol table */
@@ -1754,7 +1770,10 @@ clearst( lev ){ /* clear entries of internal scope  from the symbol table */
 		lineno = p->suse;
 		if( lineno < 0 ) lineno = - lineno;
 		if( p->slevel>lev ){ /* must clobber */
-			if( p->stype == UNDEF || ( p->sclass == ULABEL && lev < 2 ) ){
+			if( p->stype == UNDEF && p->sclass == LABEL ){
+				/* placeholder left by lblname(): just remove it */
+				}
+			else if( p->stype == UNDEF || ( p->sclass == ULABEL && lev < 2 ) ){
 				lineno = temp;
 				uerror( "%.8s undefined", p->sname );
 				}
@@ -1807,7 +1826,7 @@ hide( p ) register struct symtab *p; {
 		}
 	movestab( q, p );
 	p->sflags |= SHIDDEN;
-	q->sflags = (p->sflags&(SMOS|STAG)) | SHIDES;
+	q->sflags = (p->sflags&(SMOS|STAG|SLABEL)) | SHIDES;
 	if( hflag ) werror( "%.8s redefinition hides earlier one", p->sname );
 # ifndef BUG1
 	if( ddebug ) printf( "	%ld hidden in %ld\n", p-stab, q-stab );
@@ -1819,7 +1838,7 @@ unhide( p ) register struct symtab *p; {
 	register struct symtab *q;
 	register s, j;
 
-	s = p->sflags & (SMOS|STAG);
+	s = p->sflags & (SMOS|STAG|SLABEL);
 	q = p;
 
 	for(;;){
@@ -1829,7 +1848,7 @@ unhide( p ) register struct symtab *p; {
 
 		if( q == p ) break;
 
-		if( (q->sflags&(SMOS|STAG)) == s ){
+		if( (q->sflags&(SMOS|STAG|SLABEL)) == s ){
 			for( j =0; j<NCHNAM; ++j ) if( p->sname[j] != q->sname[j] ) break;
 			if( j == NCHNAM ){ /* found the name */
 				q->sflags &= ~SHIDDEN;

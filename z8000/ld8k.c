@@ -633,14 +633,14 @@ setupout()
 			fatal(e9);
 		fseek(drout, (long)RDATAPOS, 0);	/* to data reloc */
 	}
-	put16(tout, &filhdr.a_magic);
-	put16(tout, &filhdr.a_text);
-	put16(tout, &filhdr.a_data);
-	put16(tout, &filhdr.a_bss);
-	put16(tout, &filhdr.a_syms);
-	put16(tout, &filhdr.a_entry);
-	put16(tout, &filhdr.a_rtsiz);
-	put16(tout, &filhdr.a_rdsiz);
+	put16(tout, filhdr.a_magic);
+	put16(tout, filhdr.a_text);
+	put16(tout, filhdr.a_data);
+	put16(tout, filhdr.a_bss);
+	put16(tout, filhdr.a_syms);
+	put16(tout, filhdr.a_entry);
+	put16(tout, filhdr.a_rtsiz);
+	put16(tout, filhdr.a_rdsiz);
 }
 /* load2arg -	Load a named file or an archive */
 
@@ -1300,7 +1300,7 @@ register char	*p;
 /* Narrow a numeric value, not the first two bytes of its host storage. */
 put16(file, value)
 FILE *file;
-long value;
+unsigned value;
 {
 	putc((unsigned)(value >> 8), file);
 	putc((unsigned)value, file);
